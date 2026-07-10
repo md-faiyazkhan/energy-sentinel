@@ -25,6 +25,11 @@ class UKDALELoader:
         self.house_dir: Path = settings.RAW_DIR / settings.HOUSE_DIR_NAME
         self.channel_map: dict[int, str] = settings.CHANNEL_MAP
 
+        # Reverse mapping for O(1) lookup in load_appliance()
+        self._appliance_to_channel: dict[str, int] = {
+            name: cid for cid, name in self.channel_map.items()
+        }
+
     def _get_channel_path(self, channel_id: int) -> Path:
         """Return the file path for a given channel ID."""
         return self.house_dir / f"channel_{channel_id}.dat"
@@ -51,9 +56,9 @@ class UKDALELoader:
         """
         Load a single channel .dat file into a DataFrame.
 
-        UK-DALE .dat files are space-separated with two columns:
-        - Unix timestamp (int)
-        - Power reading in watts (float)
+        UK-DALE .dat files are whitespace-separated with two columns:
+        - Unix timestamp (int64)
+        - Power reading in watts (float32)
 
         Returns a DataFrame with columns: [timestamp, power, appliance]
         """
@@ -61,12 +66,16 @@ class UKDALELoader:
 
         df = pd.read_csv(
             path,
-            sep=" ",
+            sep=r"\s+",
             header=None,
             names=["timestamp", "power"],
+            dtype={"timestamp": "int64", "power": "float32"},
+            engine="python",
         )
 
-        df["timestamp"] = pd.to_datetime(df["timestamp"], unit="s", utc=True)
+        df["timestamp"] = pd.to_datetime(
+            df["timestamp"], unit="s", utc=True, errors="raise"
+        )
         df["appliance"] = appliance_name
 
         logger.info(
@@ -83,6 +92,7 @@ class UKDALELoader:
             dict mapping appliance name to its DataFrame.
             Example: {"Fridge": <DataFrame>, "Kettle": <DataFrame>, ...}
         """
+        logger.info(f"Loading all channels from: {self.house_dir}")
         self._validate_files()
 
         data: dict[str, pd.DataFrame] = {}
@@ -106,19 +116,16 @@ class UKDALELoader:
 
         Raises:
             ValueError if appliance_name is not in the channel map.
+            FileNotFoundError if the channel file does not exist.
         """
-        channel_id = None
-        for cid, name in self.channel_map.items():
-            if name == appliance_name:
-                channel_id = cid
-                break
-
-        if channel_id is None:
+        if appliance_name not in self._appliance_to_channel:
             valid = list(self.channel_map.values())
             raise ValueError(
                 f"'{appliance_name}' not found in channel map. "
                 f"Valid appliances: {valid}"
             )
+
+        channel_id = self._appliance_to_channel[appliance_name]
 
         path = self._get_channel_path(channel_id)
         if not path.exists():
