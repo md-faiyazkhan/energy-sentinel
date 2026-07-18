@@ -28,6 +28,9 @@ class Settings(BaseSettings):
         13: "Microwave",
     }
 
+    # Database
+    DATABASE_URL: str = "postgresql://user:password@localhost:5432/energy_sentinel"
+
     # Logging
     LOG_LEVEL: str = "INFO"
 
